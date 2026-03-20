@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      IMAGE_NAME: its-node-demo
+      IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/its-node-demo
       DATE_TAG: ${{ github.run_id }}-${{ github.run_number }}
 
     steps:
@@ -24,13 +24,13 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Login to Docker Hub
+        run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
       - name: Build Docker image
         run: |
           docker build -t $IMAGE_NAME:${{ github.sha }} .
           docker tag $IMAGE_NAME:${{ github.sha }} $IMAGE_NAME:${{ env.DATE_TAG }}
-
-      - name: Login to Docker Hub
-        run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
 
       - name: Push images
         run: |
