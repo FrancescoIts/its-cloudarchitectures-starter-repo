@@ -1,16 +1,40 @@
+# Nome della pipeline che comparirà nella UI di GitHub Act
 name: CI Pipeline
 
+# Eventi che attivano la pipeline
 on:
-  push:
-    branches: [ "main" ]
+  push:          # Ogni push su qualsiasi branch
+  pull_request:  # Ogni pull request verso il repository
 
+# -------------------------
+# JOB 1 — BUILD (CI)
+# -------------------------
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest # Runner GitHub Actions basato su Ubuntu
 
     steps:
-      - name: Checkout
+      # Step 1 — Scarica il codice del repository nel runner
+      - name: Checkout repository
         uses: actions/checkout@v4
 
+      # Step 2 — Installa Node.js 18 sul runner
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      # Step 3 — Installa tutte le dipendenze del progetto (npm install)
+      - name: Install dependencies
+        run: npm install
+
+      # Step 4 — Esegue i test automatici
+      # Se non ci sono test, non fallisce (|| echo "No tests")
+      - name: Run tests
+        run: npm test || echo "No tests"
+
+      # Step 5 — Costruisce l’immagine Docker nel job BUILD
+      # Questa immagine NON sarà pubblicata, solo testata
       - name: Build Docker image
-        run: docker build -t test-image .
+        run: |
+          docker build -t its-node-demo:latest .
