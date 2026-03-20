@@ -1,47 +1,105 @@
+# Nome della pipeline che comparirà nella UI di GitHub Act
 name: CI + Docker Hub Delivery
 
+# Eventi che attivano la pipeline
 on:
-  push:
-  pull_request:
+  push:          # Ogni push su qualsiasi branch
+  pull_request:  # Ogni pull request verso il repository
 
+# -------------------------
+# JOB 1 — BUILD (CI)
+# -------------------------
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest # Runner GitHub Actions basato su Ubuntu
 
     steps:
-      - uses: actions/checkout@v4
+      # Step 1 — Scarica il codice del repository nel runner
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Setup Node
+      # Step 2 — Installa Node.js 18 sul runner
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 18
 
+      # Step 3 — Installa tutte le dipendenze del progetto (npm install)
       - name: Install dependencies
         run: npm install
 
+      # Step 4 — Esegue i test automatici
+      # Se non ci sono test, non fallisce (|| echo "No tests")
       - name: Run tests
         run: npm test || echo "No tests"
 
+      # Step 5 — Costruisce l’immagine Docker nel job BUILD
+      # Questa immagine NON sarà pubblicata, solo testata
       - name: Build Docker image
-        run: docker build -t ci-test-image:latest .
+        run: |
+          docker build -t its-node-demo:latest .
 
+      # Step 6 — Salva l’immagine Docker in un file tar.gz
+      # cosi può essere trasferita a un altro job
+      - name: Save Docker image as artifact
+        run: |
+          docker save its-node-demo:latest | gzip > image.tar.gz
+
+      # Step 7 — Carica l’immagine salvata come artifact del workflow
+      # Così il job DEPLOY potrà scaricarla
+      - name: Upload Docker image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image         # Nome dell’artifact
+          path: image.tar.gz         # File da caricare
+          retention-days: 1          # Lo mantiene 1 giorno (per sicurezza)
+
+  # -------------------------
+  # JOB 2 — DEPLOY (CD)
+  # -------------------------
   deploy:
-    needs: build
+    name: Load & Push to Docker Hub
+    needs: build                   # Il job parte SOLO se il job build è riuscito
     runs-on: ubuntu-latest
-
+    
+    # Questo job si attiva SOLO se il push è sul branch "main"
     if: github.ref == 'refs/heads/main'
-
+    
     steps:
-      - uses: actions/checkout@v4
+      # Step 1 — Anche qui serve il codice, anche se non essenziale
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Login Docker Hub
+      # Step 2 — Scarica l’artifact creato dal job BUILD
+      - name: Download Docker image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image # Nome definito nel job BUILD
+
+      # Step 3 — Ricarica l’immagine Docker dal file tar.gz
+      # Importante: NON rifacciamo la build
+      - name: Load Docker image
+        run: |
+          gunzip -c image.tar.gz | docker load
+
+      # Step 4 — Login a Docker Hub usando i secrets del repository
+      # I secrets garantiscono che username e token non siano visibili nei log
+      - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}   # Solo username
+          password: ${{ secrets.DOCKERHUB_TOKEN }}      # Token sicuro
 
-      - name: Build image
-        run: docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/its-cloudarchitectures-starter-repo:latest .
+      # Step 5 — Ritagga l’immagine per Docker Hub
+      # Da: its-node-demo:latest
+      # A:  <username>/its-node-demo:latest
+      - name: Tag Docker image
+        run: |
+          docker tag its-node-demo:latest \
+          ${{ secrets.DOCKERHUB_USERNAME }}/its-node-demo:latest
 
-      - name: Push image
-        run: docker push ${{ secrets.DOCKERHUB_USERNAME }}/its-cloudarchitectures-starter-repo:latest
+
+      # Step 6 — Push finale verso Docker
+      - name: Push Docker image to Docker Hub
+        run: |
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/its-node-demo:latest
