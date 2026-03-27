@@ -1,0 +1,145 @@
+name: CI/CD + Healthcheck
+
+on:
+  push:
+    branches: ["main"]
+
+jobs:
+  # -------------------------
+  # JOB 1 — TEST MATRIX
+  # -------------------------
+  test-matrix:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [16, 18, 20]
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node ${{ matrix.node-version }}
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run tests
+        run: npm test
+
+  # -------------------------
+  # JOB 2 — BUILD & PUSH
+  # -------------------------
+  build-and-push:
+    needs: test-matrix
+    runs-on: ubuntu-latest
+
+    env:
+      IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/its-node-demo
+      TAG: ${{ github.sha }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t $IMAGE_NAME:$TAG .
+
+      - name: Login to Docker Hub
+        run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+      - name: Push image
+        run: docker push $IMAGE_NAME:$TAG
+
+      - name: Tag and push as latest
+        run: |
+          docker tag $IMAGE_NAME:$TAG $IMAGE_NAME:latest
+          docker push $IMAGE_NAME:latest
+
+  # -------------------------
+  # JOB 3 — DEPLOY via SSH
+  # -------------------------
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy to local PC via Ngrok SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          port: ${{ secrets.SERVER_PORT }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_KEY }}
+          script: |
+            echo ">>> Docker Login"
+            docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" -p "${{ secrets.DOCKERHUB_TOKEN }}"
+
+            echo ">>> Pull immagine aggiornata"
+            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/its-node-demo:latest
+
+            echo ">>> Stop container precedente"
+            docker stop its-node-demo || true
+
+            echo ">>> Rimozione container precedente"
+            docker rm its-node-demo || true
+
+            echo ">>> Avvio nuovo container"
+            docker run -d \
+              -p 8181:3000 \
+              --name its-node-demo \
+              ${{ secrets.DOCKERHUB_USERNAME }}/its-node-demo:latest
+
+      # -------------------------
+      # HEALTHCHECK DOPO DEPLOY
+      # -------------------------
+      - name: Wait for container health
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          port: ${{ secrets.SERVER_PORT }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_KEY }}
+          script: |
+            echo ">>> Controllo health container..."
+            for i in {1..10}; do
+              STATUS=$(docker inspect --format='{{.State.Health.Status}}' its-node-demo || echo "unknown")
+              echo "Tentativo $i — Health status: $STATUS"
+
+              if [ "$STATUS" == "healthy" ]; then
+                echo "Container is healthy!"
+                exit 0
+              fi
+
+              echo "Waiting 3s..."
+              sleep 3
+            done
+
+            echo "ERRORE: container unhealthy dopo 30 secondi"
+            exit 1
+
+      # -------------------------
+      # ESPORTAZIONE LOG
+      # -------------------------
+      - name: Export container logs
+        if: always()
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          port: ${{ secrets.SERVER_PORT }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_KEY }}
+          script: |
+            docker logs its-node-demo > /tmp/container.log 2>&1
+            cat /tmp/container.log
+
+      - name: Upload logs as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: container-logs
+          path: /tmp/container.log
+          retention-days: 7
