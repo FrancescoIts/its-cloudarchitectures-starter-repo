@@ -9,7 +9,6 @@ COPY app/ .
 
 EXPOSE 3000
 
-# HEALTHCHECK — controlla l'endpoint /health ogni 5 secondi
 # --interval=5s   → controlla ogni 5 secondi
 # --timeout=3s    → aspetta max 3 secondi per la risposta
 # --retries=5     → dopo 5 fallimenti consecutivi → "unhealthy"
