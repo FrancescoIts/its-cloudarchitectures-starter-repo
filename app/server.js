@@ -6,7 +6,7 @@ app.get("/", (req, res) => {
 });
 
 app.get("/health", (req, res) => {
-  res.json({ status: "ok", timestamp: Date.now() });
+  res.status(500).json({ status: "KO", timestamp: Date.now() });
 });
 
 app.listen(3000, () => console.log("Server running on port 3000"));
