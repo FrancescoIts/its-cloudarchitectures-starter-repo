@@ -1,104 +1,102 @@
 
-# ITS Node Starter
-Progetto per esercizi di Docker + CI/CD.
+### Pipeline 1 — CI Base (`ci.yml`)
 
+**Obiettivo**: prima pipeline CI funzionante con build Docker.
 
-# Esercizio1 – Parte 1: Build
+| Trigger | Branch | Job |
+|---|---|---|
+| push | tutti | `build` |
 
-## 🎯 Obiettivo
-Costruire l’immagine Docker dell’applicazione Node.js fornita e preparare la documentazione necessaria per eseguire il progetto in container.
+**Steps**: checkout → setup Node 18 → install → test → build Docker image
 
----
-
-## 📂 Struttura del progetto iniziale
-```
-/src
-   index.js
-   package.json
-README.md
-```
-
-L’applicazione espone una semplice API HTTP su una porta (es. 3000).
-
----
-
-## ✅ Attività da svolgere
-
-### 1. Analisi del progetto
-- Leggi `index.js` per capire:
-  - su quale porta ascolta l’applicazione
-  - quali dipendenze sono necessarie
-  - quale comando avvia l’applicazione
-- Controlla `package.json` e verifica che esista lo script:
-
-```js
-"start": "node index.js"
-```
-
-**Se non è presente, aggiungilo.**
-
----
-
-### 2. Creazione del Dockerfile
-
-Nella cartella principale crea un file chiamato: **Dockerfile**
-
-
-**Contenuto del file**
-```docker
-FROM node:18-alpine
-
-WORKDIR /app
-
-COPY app/package.json ./
-RUN npm install
-
-COPY app/ .
-
-EXPOSE 3000
-CMD ["node", "server.js"]
-```
-
-Il Dockerfile include:
-- un’immagine base ufficiale Node.js **FROM**
-- la definizione della working directory **WORKDIR**
-- copia di `package.json` + installazione dipendenze **COPY** + **RUN**
-- copia dell’applicazione **COPY**
-- esposizione della porta corretta **EXPOSE**
-- comando di avvio tramite `CMD` **CMD**
-
-
----
-
-### 3. Costruzione dell’immagine
-Esegui Senza Tag:
-```shell
-docker build -t its-node-demo .
-```
-
-oppure Con Tag:
-```shell
-docker build -t its-node-demo:1.0.0 .
+```yaml
+# Esegue build e test ad ogni push
+# L'immagine Docker viene costruita ma NON pubblicata
 ```
 
 ---
 
-### 4. Avvio del container
+### Pipeline 2 — CI + Docker Hub Delivery, senza artifact (`ci-delivery.yml`)
 
-Esegui Senza Tag:
-```shell
-docker run --name its-node-container -p 8181:3000 its-node-demo
+**Obiettivo**: separare CI e CD in due job distinti con `needs`.
+
+| Trigger | Branch | Job 1 | Job 2 |
+|---|---|---|---|
+| push / pull_request | tutti (build) · main (deploy) | `build` | `deploy` |
+
+**Novità rispetto alla precedente**:
+- Job `deploy` separato che parte solo se `build` è verde (`needs: build`)
+- Deploy attivo solo su `main` (`if: github.ref == 'refs/heads/main'`)
+- Login Docker Hub via `docker/login-action@v3` con secrets
+- Push immagine su Docker Hub con tag `latest`
+
+```yaml
+# Il job deploy parte SOLO se build è verde E il branch è main
+if: github.ref == 'refs/heads/main'
 ```
 
-oppure Con Tag:
-```shell
-docker run --name its-node-container -p 8181:3000 its-node-demo:1.0.0
+---
+
+### Pipeline 3 — CI + Docker Hub Delivery, con artifact (`ci-delivery-artifact.yml`)
+
+**Obiettivo**: evitare di ricostruire l'immagine due volte usando gli artifact di GitHub Actions.
+
+| Trigger | Branch | Job 1 | Job 2 |
+|---|---|---|---|
+| push / pull_request | tutti (build) · main (deploy) | `build` | `Load & Push to Docker Hub` |
+
+**Novità rispetto alla precedente**:
+- L'immagine viene costruita una sola volta nel job `build`
+- Salvata come file `image.tar.gz` e caricata come artifact (`upload-artifact@v4`)
+- Il job `deploy` scarica l'artifact (`download-artifact@v4`) e la ricarica con `docker load`
+- Nessuna doppia build: stessa immagine testata e poi pubblicata
+
+```yaml
+# Build una volta, riusa ovunque
+docker save its-node-demo:latest | gzip > image.tar.gz
+# ...
+gunzip -c image.tar.gz | docker load
 ```
 
-Poi apri il browser su:
+---
 
-```
-http://localhost:3000
+### Pipeline 4 — CI Docker Build con tag SHA e run ID (`ci-docker-build.yml`)
+
+**Obiettivo**: taggare le immagini in modo univoco e tracciabile.
+
+| Trigger | Branch | Job |
+|---|---|---|
+| push | tutti | `docker-build` |
+
+**Novità rispetto alle precedenti**:
+- Due tag per ogni immagine: `SHA del commit` e `run_id-run_number`
+- Nessun tag `latest` generico → ogni immagine è tracciabile al commit esatto
+- Entrambi i tag vengono pushati su Docker Hub
+
+```yaml
+# Doppio tag per massima tracciabilità
+docker build -t $IMAGE_NAME:${{ github.sha }} .
+docker tag $IMAGE_NAME:${{ github.sha }} $IMAGE_NAME:${{ env.DATE_TAG }}
 ```
 
-**Verifica che l’app risponda correttamente.**
+---
+
+### Pipeline 5 — CI Scalare con Matrix (`ci-scalare-matrix.yml`)
+
+**Obiettivo**: testare su più versioni di Node.js in parallelo e bloccare la build se anche solo un test fallisce.
+
+| Trigger | Branch | Job 1 | Job 2 |
+|---|---|---|---|
+| push | main | `test-matrix` (×3 paralleli) | `build-image` |
+
+**Novità rispetto alle precedenti**:
+- `strategy.matrix` lancia 3 run parallele: Node 16, 18, 20
+- `build-image` parte solo se **tutte e tre** le run della matrice sono verdi
+- Tag immagine basato su `github.sha` per tracciabilità
+- Push su Docker Hub con tag SHA
+
+```yaml
+strategy:
+  matrix:
+    node-version: [16, 18, 20]
+```
