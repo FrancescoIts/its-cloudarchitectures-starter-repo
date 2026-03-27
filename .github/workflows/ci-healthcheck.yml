@@ -35,55 +35,49 @@ jobs:
   # -------------------------
   build-and-push:
     needs: test-matrix
-    runs-on: [self-hosted]
-
-    env:
-      IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/its-node-demo
-      TAG: ${{ github.sha }}
+    runs-on: self-hosted
 
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Build Docker image
-        run: echo "$IMAGE_NAME"
-
       - name: Login to Docker Hub
         run: docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" -p "${{ secrets.DOCKERHUB_TOKEN }}"
 
-      - name: Push image
-        run: docker push $IMAGE_NAME:$TAG
+      - name: Build Docker image
+        run: docker build -t "${{ secrets.DOCKERHUB_USERNAME }}/its-node-demo:${{ github.sha }}" .
+
+      - name: Push image with SHA tag
+        run: docker push "${{ secrets.DOCKERHUB_USERNAME }}/its-node-demo:${{ github.sha }}"
 
       - name: Tag and push as latest
         run: |
-          docker tag $IMAGE_NAME:$TAG $IMAGE_NAME:latest
-          docker push $IMAGE_NAME:latest
+          docker tag "${{ secrets.DOCKERHUB_USERNAME }}/its-node-demo:${{ github.sha }}" "${{ secrets.DOCKERHUB_USERNAME }}/its-node-demo:latest"
+          docker push "${{ secrets.DOCKERHUB_USERNAME }}/its-node-demo:latest"
 
   # -------------------------
-  # JOB 3 — DEPLOY via SSH
+  # JOB 3 — DEPLOY
   # -------------------------
   deploy:
     needs: build-and-push
-    runs-on: [selfhosted]
+    runs-on: self-hosted
 
     steps:
       - name: Login to Docker Hub
         run: docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" -p "${{ secrets.DOCKERHUB_TOKEN }}"
 
       - name: Pull immagine aggiornata
-        run: docker pull ${{ secrets.DOCKERHUB_USERNAME }}/its-node-demo:latest
+        run: docker pull "${{ secrets.DOCKERHUB_USERNAME }}/its-node-demo:latest"
 
       - name: Stop e rimozione container precedente
         run: |
-          docker stop its-node-demo || true
-          docker rm its-node-demo || true
+          docker stop its-node-demo
+          docker rm its-node-demo
+        continue-on-error: true
 
       - name: Avvio nuovo container
         run: |
-          docker run -d \
-            -p 8181:3000 \
-            --name its-node-demo \
-            ${{ secrets.DOCKERHUB_USERNAME }}/its-node-demo:latest
+          docker run -d -p 8181:3000 --name its-node-demo "${{ secrets.DOCKERHUB_USERNAME }}/its-node-demo:latest"
 
       # -------------------------
       # HEALTHCHECK DOPO DEPLOY
@@ -93,22 +87,18 @@ jobs:
         run: |
           Write-Host ">>> Controllo health container..."
           for ($i = 1; $i -le 10; $i++) {
-            $STATUS = docker inspect --format='{{.State.Health.Status}}' its-node-demo 2>$null
+            $STATUS = (docker inspect --format "{{.State.Health.Status}}" its-node-demo) 2>$null
             if (-not $STATUS) { $STATUS = "unknown" }
             Write-Host "Tentativo $i - Health status: $STATUS"
-
             if ($STATUS -eq "healthy") {
               Write-Host "Container is healthy!"
               exit 0
             }
-
             Write-Host "Waiting 3s..."
             Start-Sleep -Seconds 3
           }
-
           Write-Host "ERRORE: container unhealthy dopo 30 secondi"
           exit 1
-
 
       # -------------------------
       # ESPORTAZIONE LOG
