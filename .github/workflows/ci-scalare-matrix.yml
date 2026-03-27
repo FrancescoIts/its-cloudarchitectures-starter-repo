@@ -28,14 +28,14 @@ jobs:
         run: npm install
 
       - name: Run tests
-        run: npm test --if-present
+        run: npm test
 
   build-image:
-    needs: test-matrix    # Esegue solo se tutti i test passano
+    needs: test-matrix
     runs-on: ubuntu-latest
 
     env:
-      IMAGE_NAME: its-node-demo
+      IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/its-node-demo
       TAG: ${{ github.sha }}
 
     steps:
