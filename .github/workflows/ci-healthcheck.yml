@@ -70,6 +70,7 @@ jobs:
         run: docker pull "${{ secrets.DOCKERHUB_USERNAME }}/its-node-demo:latest"
 
       - name: Stop e rimozione container precedente
+        shell: powershell
         run: |
           docker stop its-node-demo
           docker rm its-node-demo
@@ -83,7 +84,7 @@ jobs:
       # HEALTHCHECK DOPO DEPLOY
       # -------------------------
       - name: Wait for container health
-        shell: pwsh
+        shell: powershell
         run: |
           Write-Host ">>> Controllo health container..."
           for ($i = 1; $i -le 10; $i++) {
@@ -105,7 +106,7 @@ jobs:
       # -------------------------
       - name: Export container logs
         if: always()
-        shell: pwsh
+        shell: powershell
         run: |
           docker logs its-node-demo 2>&1 | Out-File -FilePath container.log -Encoding utf8
           Get-Content container.log
